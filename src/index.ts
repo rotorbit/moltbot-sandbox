@@ -46,6 +46,93 @@ function transformErrorMessage(message: string, host: string): string {
   return message;
 }
 
+/**
+ * Inject token persistence script into HTML responses.
+ * This allows the token to be saved to localStorage and restored automatically,
+ * ensuring WebSocket connections can access the token even after page reload.
+ */
+async function injectTokenScript(response: Response): Promise<Response> {
+  const contentType = response.headers.get('content-type') || '';
+  
+  // Only inject into HTML responses
+  if (!contentType.includes('text/html')) {
+    return response;
+  }
+  
+  // Read the HTML body
+  const html = await response.text();
+  
+  // The script to inject
+  const tokenScript = `
+<script>
+(function() {
+  const STORAGE_KEY = 'moltbot_gateway_token';
+  
+  function getTokenFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('token');
+  }
+  
+  function saveToken(token) {
+    if (token) {
+      try { localStorage.setItem(STORAGE_KEY, token); } catch (e) {}
+    }
+  }
+  
+  function getSavedToken() {
+    try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; }
+  }
+  
+  // Save token if in URL
+  const urlToken = getTokenFromUrl();
+  if (urlToken) {
+    saveToken(urlToken);
+  } else {
+    // Restore token from storage if not in URL
+    const savedToken = getSavedToken();
+    if (savedToken) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('token', savedToken);
+      window.history.replaceState({}, '', url.toString());
+    }
+  }
+  
+  // Make token available globally for WebSocket connections
+  window.getMoltbotToken = function() {
+    return getTokenFromUrl() || getSavedToken();
+  };
+})();
+</script>`;
+  
+  // Try to inject before </head>, otherwise before </body>
+  let modifiedHtml: string;
+  if (html.includes('</head>')) {
+    modifiedHtml = html.replace('</head>', `${tokenScript}\n</head>`);
+  } else if (html.includes('</body>')) {
+    modifiedHtml = html.replace('</body>', `${tokenScript}\n</body>`);
+  } else {
+    // No suitable injection point, return original content as new Response
+    const newHeaders = new Headers(response.headers);
+    // Remove Content-Length header since we're reading the body
+    newHeaders.delete('Content-Length');
+    return new Response(html, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
+  }
+  
+  // Create new response with modified HTML
+  const newHeaders = new Headers(response.headers);
+  // Remove Content-Length header since body size changed
+  newHeaders.delete('Content-Length');
+  return new Response(modifiedHtml, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+}
+
 export { Sandbox };
 
 /**
@@ -369,14 +456,17 @@ app.all('*', async (c) => {
   const httpResponse = await sandbox.containerFetch(request, MOLTBOT_PORT);
   console.log('[HTTP] Response status:', httpResponse.status);
   
+  // Inject token persistence script into HTML responses
+  const responseWithToken = await injectTokenScript(httpResponse);
+  
   // Add debug header to verify worker handled the request
-  const newHeaders = new Headers(httpResponse.headers);
+  const newHeaders = new Headers(responseWithToken.headers);
   newHeaders.set('X-Worker-Debug', 'proxy-to-moltbot');
   newHeaders.set('X-Debug-Path', url.pathname);
   
-  return new Response(httpResponse.body, {
-    status: httpResponse.status,
-    statusText: httpResponse.statusText,
+  return new Response(responseWithToken.body, {
+    status: responseWithToken.status,
+    statusText: responseWithToken.statusText,
     headers: newHeaders,
   });
 });

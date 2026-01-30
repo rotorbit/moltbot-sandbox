@@ -131,6 +131,51 @@
   </div>
   
   <script>
+    const STORAGE_KEY = 'moltbot_gateway_token';
+    
+    // Token management helpers
+    function getTokenFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('token');
+    }
+    
+    function saveToken(token) {
+      if (token) {
+        try {
+          localStorage.setItem(STORAGE_KEY, token);
+        } catch (e) {
+          console.warn('Failed to save token:', e);
+        }
+      }
+    }
+    
+    function getSavedToken() {
+      try {
+        return localStorage.getItem(STORAGE_KEY);
+      } catch (e) {
+        console.warn('Failed to get saved token:', e);
+        return null;
+      }
+    }
+    
+    function getToken() {
+      return getTokenFromUrl() || getSavedToken();
+    }
+    
+    // Save token if present in URL
+    const urlToken = getTokenFromUrl();
+    if (urlToken) {
+      saveToken(urlToken);
+    } else {
+      // Restore token from storage if not in URL
+      const savedToken = getSavedToken();
+      if (savedToken) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('token', savedToken);
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
+    
     const statusEl = document.getElementById('status');
     const titleEl = document.getElementById('title');
     const errorEl = document.getElementById('error');
@@ -154,7 +199,15 @@
           
           // Small delay so user sees the "ready" message
           setTimeout(() => {
-            window.location.reload();
+            // Preserve token when redirecting
+            const token = getToken();
+            if (token) {
+              const url = new URL(window.location.href);
+              url.searchParams.set('token', token);
+              window.location.href = url.toString();
+            } else {
+              window.location.reload();
+            }
           }, 500);
           return;
         }

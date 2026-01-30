@@ -113,6 +113,8 @@ async function injectTokenScript(response: Response): Promise<Response> {
   } else {
     // No suitable injection point, return original content as new Response
     const newHeaders = new Headers(response.headers);
+    // Remove Content-Length header since we're reading the body
+    newHeaders.delete('Content-Length');
     return new Response(html, {
       status: response.status,
       statusText: response.statusText,
@@ -122,6 +124,8 @@ async function injectTokenScript(response: Response): Promise<Response> {
   
   // Create new response with modified HTML
   const newHeaders = new Headers(response.headers);
+  // Remove Content-Length header since body size changed
+  newHeaders.delete('Content-Length');
   return new Response(modifiedHtml, {
     status: response.status,
     statusText: response.statusText,
